@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>B站播放量实时监测</title>
+
+<style>
+
+*{box-sizing:border-box}
+
+body{
+
+  margin:0;padding:24px 16px;
+
+  background:#f4f6fa;color:#252a35;
+
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+
+}
+
+.container{max-width:650px;margin:auto}
+
+h1{font-size:25px;margin-bottom:8px}
+
+.sub{color:#858b99;font-size:14px;margin-bottom:25px}
+
+.card{
+
+  background:white;border-radius:16px;
+
+  padding:20px;margin-bottom:16px;
+
+  box-shadow:0 3px 14px #00000008;
+
+}
+
+label{display:block;font-size:14px;margin:12px 0 7px}
+
+input{
+
+  width:100%;padding:13px;border:1px solid #ddd;
+
+  border-radius:9px;font-size:16px;outline:none;
+
+}
+
+input:focus{border-color:#00a1d6}
+
+button{
+
+  border:0;border-radius:9px;padding:13px 18px;
+
+  background:#00a1d6;color:white;font-size:15px;
+
+  cursor:pointer;
+
+}
+
+button:disabled{opacity:.5}
+
+.mainbtn{width:100%;margin-top:17px}
+
+.video{display:flex;gap:14px;align-items:center}
+
+.cover{width:120px;height:75px;object-fit:cover;border-radius:8px;background:#eee}
+
+.video-title{font-weight:600;font-size:15px;line-height:1.5}
+
+.muted{font-size:13px;color:#999;margin-top:7px}
+
+.big{font-size:36px;font-weight:750;color:#00a1d6;margin:10px 0}
+
+.unit{font-size:14px;color:#888}
+
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+.stat{background:#f6f8fb;padding:15px;border-radius:11px}
+
+.stat .value{font-size:21px;font-weight:700;margin-top:8px}
+
+.stat .name{font-size:13px;color:#888}
+
+.status{font-size:13px;color:#888;margin-top:12px}
+
+.history{max-height:250px;overflow:auto}
+
+.history-row{
+
+  display:flex;justify-content:space-between;
+
+  padding:11px 0;border-bottom:1px solid #eee;
+
+  font-size:13px;
+
+}
+
+.green{color:#12a36d}
+
+.red{color:#e45d65}
+
+.footer{text-align:center;color:#aaa;font-size:12px;margin:25px}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+  <h1>📊 B站播放量监测</h1>
+
+  <div class="sub">实时追踪视频数据 · 智能预测目标达成时间</div>
+
+  <div class="card">
+
+    <label>视频 BV 号</label>
+
+    <input id="bvid" placeholder="例如 BV1xx411c7mD">
+
+    <label>目标播放量</label>
+
+    <input id="target" type="number" value="1000000" min="1">
+
+    <button class="mainbtn" id="startBtn" onclick="startMonitor()">开始监测</button>
+
+    <div class="status" id="message">等待输入视频信息</div>
+
+  </div>
+
+  <div class="card" id="videoCard" style="display:none">
+
+    <div class="video">
+
+      <img id="cover" class="cover">
+
+      <div>
+
+        <div id="title" class="video-title"></div>
+
+        <div id="owner" class="muted"></div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+  <div class="card">
+
+    <div class="unit">当前累计播放量</div>
+
+    <div class="big" id="views">--</div>
+
+    <div class="unit">目标：<span id="targetShow">1,000,000</span></div>
+
+  </div>
+
+  <div class="card">
+
+    <div class="stats">
+
+      <div class="stat">
+
+        <div class="name">距离目标还差</div>
+
+        <div class="value" id="remaining">--</div>
+
+      </div>
+
+      <div class="stat">
+
+        <div class="name">近期平均每分钟增长</div>
+
+        <div class="value" id="rate">--</div>
+
+      </div>
+
+      <div class="stat">
+
+        <div class="name">预计达到目标时间</div>
+
+        <div class="value" id="eta" style="font-size:16px">等待数据</div>
+
+      </div>
+
+      <div class="stat">
+
+        <div class="name">已经监测</div>
+
+        <div class="value" id="count">0 次</div>
+
+      </div>
+
+    </div>
+
+    <div class="status" id="lastUpdate">尚未获取数据</div>
+
+  </div>
+
+  <div class="card">
+
+    <b>📈 播放量变化记录</b>
+
+    <div class="history" id="history" style="margin-top:12px">
+
+      <div class="muted">暂无记录</div>
+
+    </div>
+
+  </div>
+
+  <div class="footer">
+
+    数据来自哔哩哔哩公开视频信息 API<br>
+
+    预测结果仅供参考，实际增长速度可能变化
+
+  </div>
+
+</div>
+
+<script>
+
+let timer = null;
+
+let samples = [];
+
+let currentBvid = "";
+
+let busy = false;
+
+const $ = id => document.getElementById(id);
+
+const fmt = n => Number(n).toLocaleString("zh-CN");
+
+function say(msg){$("message").textContent=msg;}
+
+function saveSamples(){
+
+  try{
+
+    localStorage.setItem("bili_samples_"+currentBvid,
+
+      JSON.stringify(samples.slice(-120)));
+
+  }catch(e){}
+
+}
+
+function loadSamples(){
+
+  try{
+
+    samples=JSON.parse(
+
+      localStorage.getItem("bili_samples_"+currentBvid)||"[]"
+
+    );
+
+    if(!Array.isArray(samples))samples=[];
+
+  }catch(e){samples=[];}
+
+}
+
+async function fetchVideo(){
+
+  if(busy)return;
+
+  busy=true;
+
+  try{
+
+    const response=await fetch(
+
+      "/api/view?bvid="+encodeURIComponent(currentBvid),
+
+      {cache:"no-store"}
+
+    );
+
+    const result=await response.json();
+
+    if(!response.ok || result.code!==0){
+
+      throw new Error(result.message||"获取数据失败");
+
+    }
+
+    const data=result.data;
+
+    const views=Number(data.stat.view);
+
+    const now=Date.now();
+
+    $("videoCard").style.display="block";
+
+    $("cover").src=data.pic.replace(/^http:/,"https:");
+
+    $("title").textContent=data.title;
+
+    $("owner").textContent="UP主："+data.owner.name;
+
+    $("views").textContent=fmt(views);
+
+    $("lastUpdate").textContent=
+
+      "最近更新："+new Date(now).toLocaleString();
+
+    samples.push({time:now,views});
+
+    samples=samples.slice(-120);
+
+    saveSamples();
+
+    updatePrediction();
+
+    renderHistory();
+
+    say("监测正常，每分钟自动更新一次");
+
+  }catch(e){
+
+    say("获取失败："+e.message+"，稍后会自动重试");
+
+  }finally{
+
+    busy=false;
+
+  }
+
+}
+
+function updatePrediction(){
+
+  const target=Number($("target").value);
+
+  $("targetShow").textContent=fmt(target);
+
+  $("count").textContent=samples.length+" 次";
+
+  if(!samples.length)return;
+
+  const latest=samples[samples.length-1];
+
+  const remaining=Math.max(0,target-latest.views);
+
+  $("remaining").textContent=fmt(remaining);
+
+  if(latest.views>=target){
+
+    $("rate").textContent="已达成";
+
+    $("eta").textContent="目标已达成 🎉";
+
+    return;
+
+  }
+
+  // 使用最近10个时间间隔的数据计算平均增长速度
+
+  const recent=samples.slice(-11);
+
+  let rate=0;
+
+  if(recent.length>=2){
+
+    const first=recent[0];
+
+    const last=recent[recent.length-1];
+
+    const minutes=(last.time-first.time)/60000;
+
+    if(minutes>0){
+
+      rate=(last.views-first.views)/minutes;
+
+    }
+
+  }
+
+  $("rate").textContent=rate>0?fmt(Math.round(rate)):"数据不足";
+
+  if(rate<=0){
+
+    $("eta").textContent="等待更多数据";
+
+    return;
+
+  }
+
+  const minutes=remaining/rate;
+
+  const arrival=new Date(Date.now()+minutes*60000);
+
+  if(!Number.isFinite(minutes)){
+
+    $("eta").textContent="暂无法预测";
+
+  }else{
+
+    $("eta").textContent=arrival.toLocaleString("zh-CN",{
+
+      month:"2-digit",day:"2-digit",
+
+      hour:"2-digit",minute:"2-digit"
+
+    });
+
+  }
+
+}
+
+function renderHistory(){
+
+  $("history").innerHTML="";
+
+  [...samples].reverse().forEach((s,i,arr)=>{
+
+    const previous=arr[i+1];
+
+    const diff=previous?s.views-previous.views:null;
+
+    const row=document.createElement("div");
+
+    row.className="history-row";
+
+    const left=document.createElement("span");
+
+    left.textContent=new Date(s.time).toLocaleTimeString();
+
+    const right=document.createElement("span");
+
+    right.textContent=fmt(s.views)+(diff===null?"":"  "+(diff>=0?"+":"")+fmt(diff));
+
+    if(diff!==null)right.className=diff>=0?"green":"red";
+
+    row.append(left,right);
+
+    $("history").appendChild(row);
+
+  });
+
+}
+
+async function startMonitor(){
+
+  const bvid=$("bvid").value.trim();
+
+  const target=Number($("target").value);
+
+  if(!/^BV[a-zA-Z0-9]{10}$/.test(bvid)){
+
+    say("请输入正确的 BV 号");
+
+    return;
+
+  }
+
+  if(!Number.isFinite(target)||target<=0){
+
+    say("请输入有效的目标播放量");
+
+    return;
+
+  }
+
+  if(timer)clearInterval(timer);
+
+  currentBvid=bvid;
+
+  loadSamples();
+
+  $("startBtn").disabled=true;
+
+  $("startBtn").textContent="监测中…";
+
+  await fetchVideo();
+
+  timer=setInterval(fetchVideo,60000);
+
+  $("startBtn").disabled=false;
+
+  $("startBtn").textContent="重新开始监测";
+
+}
+
+$("target").addEventListener("input",updatePrediction);
+
+</script>
+
+</body>
+
+</html>
